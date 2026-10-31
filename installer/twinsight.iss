@@ -3,7 +3,7 @@
 ; Compile:  ISCC.exe installer\twinsight.iss   (or open in Inno Setup Compiler and press F9)
 
 #define MyAppName "Twinsight"
-#define MyAppVersion "1.0.0"
+#define MyAppVersion "1.0.1"
 #define MyAppPublisher "Your Name"
 #define MyAppURL "https://github.com/yourname/twinsight"
 #define MyAppExeName "Twinsight.exe"
