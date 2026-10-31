@@ -13,7 +13,7 @@ Python 3.9+ (3.10+ recommended; works on newer versions too).
     main.py              entry point
     core/                pure logic (no GUI): models, hashing, scanner, grouping
     services/file_ops.py deleting files (Recycle Bin via send2trash, or permanent)
-    ui/                  theme, sidebar, results view, group card, image tile, dialogs, preview
+    ui/                  theme, sidebar, results view, virtual list + layout, group card, image tile, dialogs, preview
 
 ## How it works
 Each image gets a 256-bit perceptual "difference hash". Images whose hashes differ by
@@ -51,3 +51,11 @@ Duplicates appear in the results list *while* the scan is still running (groups 
 as more images are analysed; Delete is enabled once the scan finishes, and Cancel keeps the
 partial results). The toolbar always shows how much disk space the current selection will free
 and how much could be reclaimed in total.
+
+## Performance (virtualised list)
+Results use a virtual list (`ui/virtual_list.py`, maths in `ui/layout.py`): only the groups near the
+visible area exist as widgets (plus a small buffer), so 100,000 groups cost the same as 20. Rows are
+created a few at a time nearest the viewport, thumbnails for rows that scroll away are skipped, JPEGs are
+decoded at reduced size, and deleting runs in a background thread with progress.
+
+Each group card has **Select all but best** (keeps the highest-resolution copy, ticks the rest) and **Clear**.

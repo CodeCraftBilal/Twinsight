@@ -36,6 +36,8 @@ class App(ctk.CTk):
         self._cancel = threading.Event()
         self._worker: threading.Thread | None = None
         self._scanning = False
+        self._busy = False                 # a delete is running
+        self._stats = (0, 0, 0)            # (groups, images, reclaimable bytes) - cached
 
         self.sidebar = Sidebar(self, self.start_scan, self.cancel_scan)
         self.sidebar.pack(side="left", fill="y")
@@ -87,16 +89,14 @@ class App(ctk.CTk):
 
     def _update_toolbar(self) -> None:
         n, freed = len(self.selection), self.selection.total_bytes
-        can_delete = n > 0 and not self._scanning
+        can_delete = n > 0 and not self._scanning and not self._busy
         label = f"Delete {n} · free {human_size(freed)}" if n else "Delete selected"
         self.delete_btn.configure(state="normal" if can_delete else "disabled", text=label)
 
-        groups = self.results.groups if hasattr(self, "results") else []
-        if groups:
-            total = sum(len(g) for g in groups)
+        n_groups, total, reclaim = self._stats
+        if n_groups:
             live = "  ·  scanning…" if self._scanning else ""
-            self.summary.configure(text=f"{len(groups)} groups · {total} images{live}")
-            reclaim = sum(g.reclaimable_bytes for g in groups)
+            self.summary.configure(text=f"{n_groups} groups · {total} images{live}")
             sel = (f"Selected {n} file{'s' if n != 1 else ''} → frees {human_size(freed)}"
                    if n else "Nothing selected")
             self.space_label.configure(
@@ -118,6 +118,8 @@ class App(ctk.CTk):
 
     # -- scanning ---------------------------------------------------------
     def start_scan(self) -> None:
+        if self._busy:
+            return
         folder = self.sidebar.folder.get()
         if not folder or not Path(folder).is_dir():
             self.sidebar.set_status("Please choose a valid folder first.")
@@ -161,6 +163,8 @@ class App(ctk.CTk):
              self._cancel.is_set()))
 
     def _apply_groups(self, groups, final: bool) -> None:
+        self._stats = (len(groups), sum(len(g) for g in groups),
+                       sum(g.reclaimable_bytes for g in groups))
         self.selection.set_sizes({r.path: r.size_bytes for g in groups for r in g.images})
         self.results.set_groups(groups, final=final)
         self._update_toolbar()
@@ -177,6 +181,10 @@ class App(ctk.CTk):
                         d / t if t else 1, f"Analysing {d} / {t}\n{g} duplicate group{'s' if g != 1 else ''} found")
                 elif kind == "groups":
                     latest_groups = ev[1]          # only the newest snapshot matters
+                elif kind == "del_progress":
+                    self.sidebar.set_status(f"Deleting {ev[1]} / {ev[2]}…")
+                elif kind == "del_done":
+                    self._finish_delete(ev[1])
                 elif kind == "done":
                     _, groups, n, failed, cancelled = ev
                     latest_groups = None
@@ -211,9 +219,31 @@ class App(ctk.CTk):
             "Delete", extra_check="Move to Recycle Bin / Trash (safer)" if trash else None)
         if not ok:
             return
-        result = file_ops.delete_files(paths, to_trash=trash and to_trash)
+        self._busy = True
+        self.sidebar.set_status(f"Deleting 0 / {len(paths)}…")
+        self._update_toolbar()
+        threading.Thread(target=self._delete_worker, args=(paths, trash and to_trash),
+                         daemon=True).start()
+
+    def _delete_worker(self, paths, to_trash: bool) -> None:
+        """Runs off the UI thread so deleting thousands of files never freezes the window."""
+        last = [0.0]
+
+        def progress(done: int, total: int) -> None:
+            now = time.monotonic()
+            if done == total or now - last[0] > 0.15:
+                last[0] = now
+                self._events.put(("del_progress", done, total))
+
+        self._events.put(("del_done", file_ops.delete_files(paths, to_trash, progress)))
+
+    def _finish_delete(self, result) -> None:
+        self._busy = False
         self.selection.remove_many(result.deleted)
         self.results.remove_paths(result.deleted)
+        groups = self.results.groups
+        self._stats = (len(groups), sum(len(g) for g in groups),
+                       sum(g.reclaimable_bytes for g in groups))
         msg = f"Deleted {len(result.deleted)} files · freed {human_size(result.freed_bytes)}"
         if result.errors:
             msg += f" · {len(result.errors)} failed"
