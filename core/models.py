@@ -25,13 +25,24 @@ class ImageRecord:
 
 @dataclass
 class DuplicateGroup:
-    """A set of images that look alike."""
+    """A set of images that look alike. ``gid`` is stable while a scan grows the group."""
 
     images: list[ImageRecord] = field(default_factory=list)
+    gid: int = 0
 
     def best(self) -> ImageRecord:
         """The image we suggest keeping: highest resolution, then largest file."""
         return max(self.images, key=lambda r: (r.pixels, r.size_bytes))
+
+    @property
+    def reclaimable_bytes(self) -> int:
+        """Space freed if everything except the best image is deleted."""
+        return sum(r.size_bytes for r in self.images) - self.best().size_bytes
+
+    @property
+    def signature(self) -> frozenset:
+        """Identity of the current membership (used to detect changes)."""
+        return frozenset(r.path for r in self.images)
 
     def __len__(self) -> int:
         return len(self.images)

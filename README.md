@@ -22,12 +22,12 @@ group (highest resolution, then biggest file) is badged BEST; "Select all but be
 Click a thumbnail for a large preview.
 
 ## Build a standalone app (PyInstaller)
-    Windows:      build.bat
-    Linux/macOS:  ./build.sh
+    Windows:      scripts\build.bat
+    Linux/macOS:  ./scripts/build.sh
 or manually:
 
     pip install -r requirements-dev.txt
-    python tools/make_icon.py          # regenerates assets/app_icon.png/.ico
+    python scripts/tools/make_icon.py          # regenerates assets/app_icon.png/.ico
     pyinstaller twinsight.spec --noconfirm --clean
 
 Output: `dist/Twinsight/` (one-folder build; zip it to share). To get a single .exe instead,
@@ -37,11 +37,17 @@ Replace `assets/app_icon.*` with your own icon any time (macOS needs `app_icon.i
 
 ## Create a shareable installer (Windows, Inno Setup)
 1. Install [Inno Setup 6](https://jrsoftware.org/isdl.php).
-2. Run `build_installer.bat` (builds the app, then compiles `installer/twinsight.iss`).
-   Or manually: `build.bat`, then open `installer/twinsight.iss` in Inno Setup and press F9.
+2. Run `scripts\build_installer.bat` (builds the app, then compiles `installer/twinsight.iss`).
+   Or manually: `scripts\build.bat`, then open `installer/twinsight.iss` in Inno Setup and press F9.
 3. Share `installer_output/Twinsight-Setup-1.0.0.exe`.
 
 Edit the `#define` lines at the top of the `.iss` (name, version, publisher, URL) before releasing.
 Keep `AppId` unchanged across versions so upgrades replace the old install.
 To publish on GitHub: Releases -> Draft a new release -> attach the Setup .exe.
 Unsigned installers can trigger Windows SmartScreen warnings ("More info -> Run anyway").
+
+## Live results & space saved
+Duplicates appear in the results list *while* the scan is still running (groups grow and merge
+as more images are analysed; Delete is enabled once the scan finishes, and Cancel keeps the
+partial results). The toolbar always shows how much disk space the current selection will free
+and how much could be reclaimed in total.

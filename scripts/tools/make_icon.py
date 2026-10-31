@@ -1,9 +1,9 @@
-"""Generate assets/app_icon.png and assets/app_icon.ico (run: python tools/make_icon.py)."""
+"""Generate assets/app_icon.png and assets/app_icon.ico (run: python scripts/tools/make_icon.py)."""
 from pathlib import Path
 
 from PIL import Image, ImageDraw
 
-OUT = Path(__file__).resolve().parent.parent / "assets"
+OUT = Path(__file__).resolve().parents[2] / "assets"
 S = 1024
 
 

@@ -15,6 +15,7 @@ IMAGE_EXTENSIONS = {
 }
 
 ProgressCb = Callable[[int, int], None]
+RecordCb = Callable[[ImageRecord], None]
 
 
 def find_images(folder: Path, recursive: bool = True) -> Iterator[Path]:
@@ -34,8 +35,12 @@ def scan_folder(
     recursive: bool,
     progress: ProgressCb | None = None,
     cancel: threading.Event | None = None,
+    on_record: RecordCb | None = None,
 ) -> tuple[list[ImageRecord], list[Path]]:
-    """Hash every image in *folder*. Returns (records, unreadable_paths)."""
+    """Hash every image in *folder*. Returns (records, unreadable_paths).
+
+    *on_record* is called (from the calling thread) as each image is hashed.
+    """
     paths = list(find_images(folder, recursive))
     total = len(paths)
     records: list[ImageRecord] = []
@@ -51,9 +56,13 @@ def scan_folder(
                     f.cancel()
                 break
             try:
-                records.append(fut.result())
+                rec = fut.result()
             except Exception:
                 failed.append(futures[fut])
+            else:
+                records.append(rec)
+                if on_record:
+                    on_record(rec)
             done += 1
             if progress:
                 progress(done, total)

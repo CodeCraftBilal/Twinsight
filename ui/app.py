@@ -3,12 +3,13 @@ from __future__ import annotations
 import queue
 import sys
 import threading
+import time
 from pathlib import Path
 
 import customtkinter as ctk
 
 from app_paths import resource_path
-from core.grouping import group_similar
+from core.grouping import IncrementalGrouper
 from core.scanner import scan_folder
 from services import file_ops
 
@@ -34,6 +35,7 @@ class App(ctk.CTk):
         self._events: queue.Queue = queue.Queue()
         self._cancel = threading.Event()
         self._worker: threading.Thread | None = None
+        self._scanning = False
 
         self.sidebar = Sidebar(self, self.start_scan, self.cancel_scan)
         self.sidebar.pack(side="left", fill="y")
@@ -66,28 +68,42 @@ class App(ctk.CTk):
         bar = ctk.CTkFrame(parent, fg_color=theme.SURFACE, corner_radius=theme.RADIUS,
                            border_width=1, border_color=theme.BORDER)
         bar.pack(fill="x")
-        self.summary = ctk.CTkLabel(bar, text="", font=theme.font(14, "bold"))
-        self.summary.pack(side="left", padx=18, pady=14)
+        info = ctk.CTkFrame(bar, fg_color="transparent")
+        info.pack(side="left", padx=18, pady=12)
+        self.summary = ctk.CTkLabel(info, text="", font=theme.font(14, "bold"), anchor="w")
+        self.summary.pack(anchor="w")
+        self.space_label = ctk.CTkLabel(info, text="", font=theme.font(12),
+                                        text_color=theme.MUTED, anchor="w")
+        self.space_label.pack(anchor="w")
 
-        self.delete_btn = ctk.CTkButton(bar, text="Delete selected", width=140, height=36,
+        self.delete_btn = ctk.CTkButton(bar, text="Delete selected", width=210, height=38,
                                         corner_radius=10, fg_color=theme.DANGER,
                                         hover_color=theme.DANGER_HOVER, command=self.delete_selected)
         self.delete_btn.pack(side="right", padx=(6, 14), pady=10)
         for text, cmd in (("Clear", self.clear_selection), ("Select all but best", self.auto_select),):
-            ctk.CTkButton(bar, text=text, height=36, corner_radius=10, fg_color=theme.SURFACE_ALT,
+            ctk.CTkButton(bar, text=text, height=38, corner_radius=10, fg_color=theme.SURFACE_ALT,
                           hover_color=theme.BORDER, text_color=theme.TEXT, command=cmd
                           ).pack(side="right", padx=6, pady=10)
 
     def _update_toolbar(self) -> None:
-        n = len(self.selection)
-        self.delete_btn.configure(state="normal" if n else "disabled",
-                                  text=f"Delete selected ({n})" if n else "Delete selected")
+        n, freed = len(self.selection), self.selection.total_bytes
+        can_delete = n > 0 and not self._scanning
+        label = f"Delete {n} · free {human_size(freed)}" if n else "Delete selected"
+        self.delete_btn.configure(state="normal" if can_delete else "disabled", text=label)
+
         groups = self.results.groups if hasattr(self, "results") else []
         if groups:
             total = sum(len(g) for g in groups)
-            self.summary.configure(text=f"{len(groups)} groups · {total} images · {n} selected")
+            live = "  ·  scanning…" if self._scanning else ""
+            self.summary.configure(text=f"{len(groups)} groups · {total} images{live}")
+            reclaim = sum(g.reclaimable_bytes for g in groups)
+            sel = (f"Selected {n} file{'s' if n != 1 else ''} → frees {human_size(freed)}"
+                   if n else "Nothing selected")
+            self.space_label.configure(
+                text=f"{sel}   |   Up to {human_size(reclaim)} can be reclaimed")
         else:
             self.summary.configure(text="Results")
+            self.space_label.configure(text="")
 
     # -- selection --------------------------------------------------------
     def auto_select(self) -> None:
@@ -107,9 +123,12 @@ class App(ctk.CTk):
             self.sidebar.set_status("Please choose a valid folder first.")
             return
         self.selection.replace([])
-        self.results.show_message("Scanning…")
+        self.selection.set_sizes({})
+        self.results.show_message("Scanning…\nDuplicates will appear here as soon as they are found.")
         self._cancel.clear()
+        self._scanning = True
         self.sidebar.set_scanning(True)
+        self._update_toolbar()
         args = (Path(folder), bool(self.sidebar.recursive.get()), self.sidebar.threshold)
         self._worker = threading.Thread(target=self._scan_worker, args=args, daemon=True)
         self._worker.start()
@@ -119,38 +138,59 @@ class App(ctk.CTk):
 
     def _scan_worker(self, folder: Path, recursive: bool, threshold: int) -> None:
         put = self._events.put
-        records, failed = scan_folder(
-            folder, recursive, lambda d, t: put(("progress", d, t)), self._cancel)
-        if self._cancel.is_set():
-            put(("cancelled",))
-            return
-        put(("grouping",))
-        groups = group_similar(records, threshold)
-        put(("done", groups, len(records), len(failed)))
+        grouper = IncrementalGrouper(threshold)
+        last_emit = [0.0]
+
+        def on_record(rec) -> None:
+            grouper.add(rec)
+            now = time.monotonic()
+            if grouper.dirty and now - last_emit[0] > 0.6:   # throttle UI refreshes
+                last_emit[0] = now
+                put(("groups", grouper.snapshot()))
+
+        last_prog = [0.0]
+
+        def on_progress(done: int, total: int) -> None:
+            now = time.monotonic()
+            if done == total or now - last_prog[0] > 0.1:
+                last_prog[0] = now
+                put(("progress", done, total, grouper.group_count))
+
+        _records, failed = scan_folder(folder, recursive, on_progress, self._cancel, on_record)
+        put(("done", grouper.snapshot(sort_by_size=True), grouper.total, len(failed),
+             self._cancel.is_set()))
+
+    def _apply_groups(self, groups, final: bool) -> None:
+        self.selection.set_sizes({r.path: r.size_bytes for g in groups for r in g.images})
+        self.results.set_groups(groups, final=final)
+        self._update_toolbar()
 
     def _drain_events(self) -> None:
+        latest_groups = None
         try:
             while True:
                 ev = self._events.get_nowait()
                 kind = ev[0]
                 if kind == "progress":
-                    _, d, t = ev
-                    self.sidebar.set_progress(d / t if t else 1, f"Analysing {d} / {t}")
-                elif kind == "grouping":
-                    self.sidebar.set_progress(1, "Comparing images…")
-                elif kind == "cancelled":
-                    self.sidebar.set_scanning(False)
-                    self.sidebar.set_status("Scan cancelled")
-                    self.results.show_message("Scan cancelled.")
+                    _, d, t, g = ev
+                    self.sidebar.set_progress(
+                        d / t if t else 1, f"Analysing {d} / {t}\n{g} duplicate group{'s' if g != 1 else ''} found")
+                elif kind == "groups":
+                    latest_groups = ev[1]          # only the newest snapshot matters
                 elif kind == "done":
-                    _, groups, n, failed = ev
+                    _, groups, n, failed, cancelled = ev
+                    latest_groups = None
+                    self._scanning = False
                     self.sidebar.set_scanning(False)
                     note = f" ({failed} unreadable)" if failed else ""
-                    self.sidebar.set_status(f"Scanned {n} images{note}")
-                    self.results.show_groups(groups)
-                    self._update_toolbar()
+                    self.sidebar.set_status(
+                        ("Scan cancelled — showing partial results\n" if cancelled else "")
+                        + f"Scanned {n} images{note}")
+                    self._apply_groups(groups, final=True)
         except queue.Empty:
             pass
+        if latest_groups is not None:
+            self._apply_groups(latest_groups, final=False)
         self.after(60, self._drain_events)
 
     # -- deleting ---------------------------------------------------------
@@ -159,9 +199,15 @@ class App(ctk.CTk):
         if not paths:
             return
         trash = file_ops.trash_available()
+        chosen = set(paths)
+        wiped = sum(1 for g in self.results.groups if all(r.path in chosen for r in g.images))
+        message = (f"{len(paths)} file(s) will be removed, freeing "
+                   f"{human_size(self.selection.total_bytes)}.")
+        if wiped:
+            message += (f"\n\n⚠ In {wiped} group(s) every copy is selected, so those images "
+                        "will be gone completely.")
         ok, to_trash = ConfirmDialog.ask(
-            self, "Delete selected images?",
-            f"{len(paths)} file(s) will be removed from your disk.",
+            self, "Delete selected images?", message,
             "Delete", extra_check="Move to Recycle Bin / Trash (safer)" if trash else None)
         if not ok:
             return

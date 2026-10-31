@@ -24,7 +24,8 @@ class GroupCard(ctk.CTkFrame):
                          border_width=1, border_color=theme.BORDER)
         head = ctk.CTkFrame(self, fg_color="transparent")
         head.pack(fill="x", padx=16, pady=(14, 8))
-        ctk.CTkLabel(head, text=f"Group {index}", font=theme.font(15, "bold")).pack(side="left")
+        self._title = ctk.CTkLabel(head, text=f"Group {index}", font=theme.font(15, "bold"))
+        self._title.pack(side="left")
         ctk.CTkLabel(head, text=f"{len(group)} similar images", font=theme.font(12),
                      text_color=theme.MUTED).pack(side="left", padx=10)
 
@@ -36,6 +37,9 @@ class GroupCard(ctk.CTkFrame):
             tile = ImageTile(grid, rec, rec is best, selection, loader, on_preview)
             tile.grid(row=i // self.COLS, column=i % self.COLS, padx=6, pady=6, sticky="n")
             self.tiles.append(tile)
+
+    def set_index(self, index: int) -> None:
+        self._title.configure(text=f"Group {index}")
 
     def sync(self) -> None:
         for t in self.tiles:

@@ -1,7 +1,8 @@
 @echo off
 REM Full pipeline: PyInstaller build -> Inno Setup installer.
 REM Requires Inno Setup 6 (https://jrsoftware.org/isdl.php)
-call ".\scripts\build.bat" || exit /b 1
+call "%~dp0build.bat" || exit /b 1
+cd /d "%~dp0.."
 
 set ISCC="%ProgramFiles(x86)%\Inno Setup 6\ISCC.exe"
 if not exist %ISCC% set ISCC="%ProgramFiles%\Inno Setup 6\ISCC.exe"
