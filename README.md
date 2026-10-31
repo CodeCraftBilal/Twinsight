@@ -20,3 +20,17 @@ Each image gets a 256-bit perceptual "difference hash". Images whose hashes diff
 <= threshold bits are grouped (slider: 0 = exact, higher = looser). The best copy in each
 group (highest resolution, then biggest file) is badged BEST; "Select all but best" ticks the rest.
 Click a thumbnail for a large preview.
+
+## Build a standalone app (PyInstaller)
+    Windows:      build.bat
+    Linux/macOS:  ./build.sh
+or manually:
+
+    pip install -r requirements-dev.txt
+    python tools/make_icon.py          # regenerates assets/app_icon.png/.ico
+    pyinstaller twinsight.spec --noconfirm --clean
+
+Output: `dist/Twinsight/` (one-folder build; zip it to share). To get a single .exe instead,
+use `pyinstaller main.py --onefile --noconsole --name Twinsight --icon assets/app_icon.ico
+--collect-data customtkinter --add-data "assets;assets"` (use `:` instead of `;` on Linux/macOS).
+Replace `assets/app_icon.*` with your own icon any time (macOS needs `app_icon.icns`).

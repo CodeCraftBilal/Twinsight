@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import queue
+import sys
 import threading
 from pathlib import Path
 
 import customtkinter as ctk
 
+from app_paths import resource_path
 from core.grouping import group_similar
 from core.scanner import scan_folder
 from services import file_ops
@@ -45,7 +47,19 @@ class App(ctk.CTk):
 
         self._update_toolbar()
         self.after(60, self._drain_events)
+        self.after(250, self._set_icon)  # CustomTkinter resets the icon on Windows at ~200ms
         self.protocol("WM_DELETE_WINDOW", self._close)
+
+    def _set_icon(self) -> None:
+        try:
+            if sys.platform.startswith("win"):
+                self.iconbitmap(str(resource_path("assets/app_icon.ico")))
+            else:
+                from PIL import Image, ImageTk
+                self._icon = ImageTk.PhotoImage(Image.open(resource_path("assets/app_icon.png")))
+                self.iconphoto(True, self._icon)
+        except Exception:
+            pass  # icon is cosmetic
 
     # -- toolbar ----------------------------------------------------------
     def _build_toolbar(self, parent) -> None:
